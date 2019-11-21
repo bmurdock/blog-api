@@ -10,7 +10,21 @@ exports.getUsers = (req, res, next) => {
         }
         res.json(result);
     });
+}
 
+exports.getUserById = (req, res, next) => {
+    if (typeof req.params.id === 'string' && mongoose.Types.ObjectId.isValid(req.params.id)) {
+        User.findById(req.params.id, (err, result) => {
+            if (err) {
+                res.status(400).json(err);
+                return;
+            }
+            res.json(result);
+        });
+    }
+    else {
+        res.status(400).json({ "error": "Invalid user id" });
+    }
 }
 
 exports.createUser = (req, res, next) => {
@@ -59,12 +73,9 @@ exports.login = (req, res, next) => {
             if (err) {
                 res.status(400).json(err);
             }
-
             const user = new User(result[0]);
-            console.log('user: ', user);
-            console.log('password: ', user.validPassword(pass));
             if (user.validPassword(pass)) {
-                console.log('sending: ', user.toAuthJSON());
+
                 res.status(200).json(user.toAuthJSON());
                 return
             }
