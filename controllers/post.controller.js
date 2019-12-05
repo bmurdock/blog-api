@@ -53,6 +53,19 @@ exports.getPosts = (req, res, next) => {
 
 }
 
+exports.categoryPosts = (req, res, next) => {
+    const query = {
+        category: req.params.cateogry
+    };
+    Post.find(query, (err, result) => {
+        if (err) {
+            res.status(400).json(err);
+            return;
+        }
+        res.json(result);
+    });
+}
+
 exports.deletePost = (req, res, next) => {
     if (typeof req.params.id === 'string' && mongoose.Types.ObjectId.isValid(req.params.id)) {
         const query = {
