@@ -1,93 +1,93 @@
 const mongoose = require('mongoose');
 const Post = require('../models/post.model');
 
-exports.createPost = (req, res, next) => {
-    if (typeof req.body !== 'undefined') {
-        const fields = validate(['title', 'body', 'category', 'author'], req.body);
-        if (fields.length) {
-            res.status(400).json({ "error": "Missing fields", "fields": fields })
-            return;
-        }
-        let post = new Post(req.body);
-        post.save((err, result) => {
-            if (err) {
-                res.status(400).json(err);
-                return;
-            }
-            res.json(result);
-        });
-    }
-    else {
-        res.status(400).json({ "error": "Request not valid" });
-    }
-}
-exports.updatePost = (req, res, next) => {
+exports.createPost = async (req, res) => {
     if (typeof req.body === 'undefined') {
-        res.status(400).json({ "error": "Request not valid" });
+        res.status(400).json({ error: 'Request not valid' });
         return;
     }
-    if (typeof req.params.id === 'string' && mongoose.Types.ObjectId.isValid(req.params.id)) {
-        const query = { _id: req.params.id };
-        const update = req.body;
-        Post.findByIdAndUpdate(query, update, (err, result) => {
-            if (err) {
-                res.status(400).json(err);
-                return;
-            }
-            res.json(result);
+
+    const fields = validate(['title', 'body', 'category', 'author'], req.body);
+    if (fields.length) {
+        res.status(400).json({ error: 'Missing fields', fields });
+        return;
+    }
+
+    try {
+        const post = new Post(req.body);
+        const result = await post.save();
+        res.json(result);
+    } catch (err) {
+        res.status(400).json(err);
+    }
+};
+
+exports.updatePost = async (req, res) => {
+    if (typeof req.body === 'undefined') {
+        res.status(400).json({ error: 'Request not valid' });
+        return;
+    }
+    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+        res.status(400).json({ error: 'Invalid post id' });
+        return;
+    }
+
+    try {
+        const result = await Post.findByIdAndUpdate(req.params.id, req.body, {
+            new: true,
+            runValidators: true
         });
-    }
-    else {
-        res.status(400).json({ "error": "Invalid post id" });
-    }
-}
-exports.getPosts = (req, res, next) => {
-    const query = {};
-    Post.find(query, (err, result) => {
-        if (err) {
-            res.status(400).json(err);
+        if (!result) {
+            res.status(404).json({ error: 'Post not found' });
             return;
         }
         res.json(result);
-    });
+    } catch (err) {
+        res.status(400).json(err);
+    }
+};
 
-}
+exports.getPosts = async (req, res) => {
+    try {
+        const result = await Post.find({});
+        res.json(result);
+    } catch (err) {
+        res.status(400).json(err);
+    }
+};
 
-exports.categoryPosts = (req, res, next) => {
-    const query = {
-        category: req.params.cateogry
-    };
-    Post.find(query, (err, result) => {
-        if (err) {
-            res.status(400).json(err);
+exports.categoryPosts = async (req, res) => {
+    try {
+        const result = await Post.find({ category: req.params.category });
+        res.json(result);
+    } catch (err) {
+        res.status(400).json(err);
+    }
+};
+
+exports.deletePost = async (req, res) => {
+    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+        res.status(400).json({ error: 'Invalid post id' });
+        return;
+    }
+
+    try {
+        const result = await Post.findByIdAndDelete(req.params.id);
+        if (!result) {
+            res.status(404).json({ error: 'Post not found' });
             return;
         }
         res.json(result);
-    });
-}
-
-exports.deletePost = (req, res, next) => {
-    if (typeof req.params.id === 'string' && mongoose.Types.ObjectId.isValid(req.params.id)) {
-        const query = {
-            _id: req.params.id
-        };
-        Post.findByIdAndDelete(query, (err, result) => {
-            if (err) {
-                res.status(400).json(err);
-                return;
-            }
-            res.json(result);
-        });
+    } catch (err) {
+        res.status(400).json(err);
     }
-    else {
-        res.status(400).json({ "error": "Invalid post id" });
-    }
-}
+};
 
 function validate(fields, body) {
     return fields.filter((field) => {
         if (typeof body[field] === 'undefined') {
             return field;
         }
+        return false;
     });
 }

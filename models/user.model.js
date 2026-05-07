@@ -4,8 +4,22 @@ const uniqueValidator = require('mongoose-unique-validator');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
+const path = require('path');
 
-const privateKey = fs.readFileSync('./key.pem', 'utf8');
+const DEFAULT_DEV_JWT_SECRET = 'development-only-secret-change-me';
+
+function resolveJwtSecret() {
+    if (process.env.JWT_SECRET) {
+        return process.env.JWT_SECRET;
+    }
+    const keyPath = process.env.JWT_KEY_PATH || path.resolve(__dirname, '../key.pem');
+    if (fs.existsSync(keyPath)) {
+        return fs.readFileSync(keyPath, 'utf8');
+    }
+    return DEFAULT_DEV_JWT_SECRET;
+}
+
+const jwtSecret = resolveJwtSecret();
 
 const UserSchema = new Schema({
 
@@ -21,7 +35,6 @@ const UserSchema = new Schema({
 UserSchema.methods.setPassword = function (password) {
     this.salt = crypto.randomBytes(16).toString('hex');
     this.hash = crypto.pbkdf2Sync(password, this.salt, 10000, 512, 'sha512').toString('hex');
-    console.log('Setting crypto stuff: ', this.hash);
 }
 
 UserSchema.methods.validPassword = function (password) {
@@ -38,7 +51,7 @@ UserSchema.methods.generateJWT = function () {
         id: this._id,
         username: this.username,
         exp: parseInt(exp.getTime() / 1000),
-    }, privateKey);
+    }, jwtSecret);
 }
 
 

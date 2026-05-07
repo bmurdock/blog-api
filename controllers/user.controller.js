@@ -1,96 +1,140 @@
 const User = require('../models/user.model');
 const mongoose = require('mongoose');
 
-exports.getUsers = (req, res, next) => {
-    const query = {};
-    User.find(query, (err, result) => {
-        if (err) {
-            res.status(400).json(err);
+exports.getUsers = async (req, res) => {
+    try {
+        const result = await User.find({});
+        res.json(result);
+    } catch (err) {
+        res.status(400).json(err);
+    }
+};
+
+exports.getUserById = async (req, res) => {
+    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+        res.status(400).json({ error: 'Invalid user id' });
+        return;
+    }
+
+    try {
+        const result = await User.findById(req.params.id);
+        if (!result) {
+            res.status(404).json({ error: 'User not found' });
             return;
         }
         res.json(result);
-    });
-}
-
-exports.getUserById = (req, res, next) => {
-    if (typeof req.params.id === 'string' && mongoose.Types.ObjectId.isValid(req.params.id)) {
-        User.findById(req.params.id, (err, result) => {
-            if (err) {
-                res.status(400).json(err);
-                return;
-            }
-            res.json(result);
-        });
+    } catch (err) {
+        res.status(400).json(err);
     }
-    else {
-        res.status(400).json({ "error": "Invalid user id" });
-    }
-}
+};
 
-exports.createUser = (req, res, next) => {
-    if (typeof req.body !== 'undefined') {
-        const fields = validate(['username', 'email', 'password'], req.body);
-        if (fields.length) {
-            res.status(400).json({ "error": "Missing fields", "fields": fields })
-            return;
-        }
-        const pass = req.body.password;
-        delete req.body.password;
-        console.log('body: ', req.body);
-        let user = new User(req.body);
+exports.createUser = async (req, res) => {
+    if (typeof req.body === 'undefined') {
+        res.status(400).json({ error: 'Request not valid' });
+        return;
+    }
+
+    const fields = validate(['username', 'email', 'password'], req.body);
+    if (fields.length) {
+        res.status(400).json({ error: 'Missing fields', fields });
+        return;
+    }
+
+    try {
+        const payload = { ...req.body };
+        const pass = payload.password;
+        delete payload.password;
+        const user = new User(payload);
         user.setPassword(pass);
-        user.save((err, result) => {
-            if (err) {
-                res.status(400).json(err);
-                return;
-            }
-            res.json(result);
-        });
+        const result = await user.save();
+        res.json(result);
+    } catch (err) {
+        res.status(400).json(err);
     }
-    else {
-        res.status(400).json({ "error": "Request not valid" });
+};
+
+exports.updateUser = async (req, res) => {
+    if (typeof req.body === 'undefined') {
+        res.status(400).json({ error: 'Request not valid' });
+        return;
     }
-}
+    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+        res.status(400).json({ error: 'Invalid user id' });
+        return;
+    }
 
-exports.updateUser = (req, res, next) => {
-
-}
-
-exports.deleteUser = (req, res, next) => {
-
-}
-
-exports.login = (req, res, next) => {
-    if (typeof req.body !== 'undefined') {
-        const fields = validate(['username', 'password'], req.body);
-        if (fields.length) {
-            res.status(400).json({ "error": "Missing fields", "fields": fields })
+    try {
+        const user = await User.findById(req.params.id);
+        if (!user) {
+            res.status(404).json({ error: 'User not found' });
             return;
         }
-        const query = { username: req.body.username };
-        const pass = req.body.password;
-        User.find(query, (err, result) => {
-            if (err) {
-                res.status(400).json(err);
-            }
-            const user = new User(result[0]);
-            if (user.validPassword(pass)) {
 
-                res.status(200).json(user.toAuthJSON());
-                return
+        const allowedFields = ['username', 'email', 'bio', 'image', 'avatar'];
+        for (const field of allowedFields) {
+            if (typeof req.body[field] !== 'undefined') {
+                user[field] = req.body[field];
             }
-            res.status(500).json({ "error": "Invalid access" });
-        });
+        }
+        if (typeof req.body.password === 'string' && req.body.password.length > 0) {
+            user.setPassword(req.body.password);
+        }
+
+        const result = await user.save();
+        res.json(result);
+    } catch (err) {
+        res.status(400).json(err);
     }
-    else {
-        res.status(400).json({ "error": "Request not valid" });
+};
+
+exports.deleteUser = async (req, res) => {
+    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+        res.status(400).json({ error: 'Invalid user id' });
+        return;
     }
-}
+
+    try {
+        const result = await User.findByIdAndDelete(req.params.id);
+        if (!result) {
+            res.status(404).json({ error: 'User not found' });
+            return;
+        }
+        res.json(result);
+    } catch (err) {
+        res.status(400).json(err);
+    }
+};
+
+exports.login = async (req, res) => {
+    if (typeof req.body === 'undefined') {
+        res.status(400).json({ error: 'Request not valid' });
+        return;
+    }
+
+    const fields = validate(['username', 'password'], req.body);
+    if (fields.length) {
+        res.status(400).json({ error: 'Missing fields', fields });
+        return;
+    }
+
+    try {
+        const user = await User.findOne({ username: req.body.username });
+        if (!user || !user.validPassword(req.body.password)) {
+            res.status(401).json({ error: 'Invalid access' });
+            return;
+        }
+
+        res.status(200).json(user.toAuthJSON());
+    } catch (err) {
+        res.status(400).json(err);
+    }
+};
 
 function validate(fields, body) {
     return fields.filter((field) => {
         if (typeof body[field] === 'undefined') {
             return field;
         }
+        return false;
     });
 }
