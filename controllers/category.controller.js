@@ -5,6 +5,7 @@ const { findPage } = require('./pagination');
 
 exports.getCategories = async (req, res) => {
     try {
+        // `req.query` contains values from the URL, such as ?page=2&limit=10.
         const result = await findPage(Category.find({}), req.query);
         res.json(result);
     } catch (err) {
@@ -18,6 +19,7 @@ exports.createCategory = async (req, res) => {
         return;
     }
 
+    // Do simple request validation before asking Mongoose to save anything.
     const fields = validate(['name'], req.body);
     if (fields.length) {
         res.status(400).json({ error: 'Missing fields', fields });
@@ -38,6 +40,8 @@ exports.updateCategory = async (req, res) => {
         res.status(400).json({ error: 'Request not valid' });
         return;
     }
+    // Invalid ObjectIds can make Mongoose throw a cast error. Checking early
+    // lets the API send a clearer 400 response.
     if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
         res.status(400).json({ error: 'Invalid category id' });
         return;
@@ -45,6 +49,7 @@ exports.updateCategory = async (req, res) => {
 
     try {
         const result = await Category.findByIdAndUpdate(req.params.id, req.body, {
+            // Return the updated document and run schema validators on the update.
             new: true,
             runValidators: true
         });
@@ -65,6 +70,7 @@ exports.deleteCategory = async (req, res) => {
     }
 
     try {
+        // Keep posts from pointing at a category that no longer exists.
         const referencedPost = await Post.exists({ category: req.params.id });
         if (referencedPost) {
             res.status(409).json({ error: 'Category has posts' });
@@ -83,6 +89,7 @@ exports.deleteCategory = async (req, res) => {
 };
 
 function validate(fields, body) {
+    // Return a list of missing field names so the client knows what to fix.
     return fields.filter((field) => {
         if (typeof body[field] === 'undefined') {
             return field;

@@ -8,6 +8,7 @@ exports.createPost = async (req, res) => {
         return;
     }
 
+    // A post needs text plus IDs that connect it to a category and author.
     const fields = validate(['title', 'body', 'category', 'author'], req.body);
     if (fields.length) {
         res.status(400).json({ error: 'Missing fields', fields });
@@ -28,6 +29,7 @@ exports.updatePost = async (req, res) => {
         res.status(400).json({ error: 'Request not valid' });
         return;
     }
+    // Validate IDs at the edge of the app before passing them to Mongoose.
     if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
         res.status(400).json({ error: 'Invalid post id' });
         return;
@@ -35,6 +37,7 @@ exports.updatePost = async (req, res) => {
 
     try {
         const result = await Post.findByIdAndUpdate(req.params.id, req.body, {
+            // `new: true` sends back the changed post, not the old version.
             new: true,
             runValidators: true
         });
@@ -50,6 +53,7 @@ exports.updatePost = async (req, res) => {
 
 exports.getPosts = async (req, res) => {
     try {
+        // Keep list endpoints consistent by sharing the pagination helper.
         const result = await findPage(Post.find({}), req.query);
         res.json(result);
     } catch (err) {
@@ -59,6 +63,7 @@ exports.getPosts = async (req, res) => {
 
 exports.categoryPosts = async (req, res) => {
     try {
+        // This endpoint shows filtering: only posts whose category matches the URL.
         const result = await findPage(Post.find({ category: req.params.category }), req.query);
         res.json(result);
     } catch (err) {
@@ -85,6 +90,7 @@ exports.deletePost = async (req, res) => {
 };
 
 function validate(fields, body) {
+    // Return a list of missing field names so API clients can correct the request.
     return fields.filter((field) => {
         if (typeof body[field] === 'undefined') {
             return field;

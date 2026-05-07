@@ -1,61 +1,38 @@
-jest.mock('../models/post.model', () => ({
-    find: jest.fn(),
-    findByIdAndDelete: jest.fn()
-}));
-
+const test = require('node:test');
+const { assert, assertJsonCall, createQuery, createRes } = require('./test-helpers');
 const Post = require('../models/post.model');
 const postController = require('../controllers/post.controller');
 
-function createRes() {
-    const res = {};
-    res.status = jest.fn().mockReturnValue(res);
-    res.json = jest.fn().mockReturnValue(res);
-    return res;
-}
+// These tests show how to verify controller behavior without making real
+// database queries.
+test('getPosts applies bounded pagination and lean reads', async (t) => {
+    const query = createQuery([{ _id: '1' }]);
+    const find = t.mock.method(Post, 'find', () => query);
+    const req = { query: { limit: '500', page: '2' } };
+    const res = createRes();
 
-function createQuery(result) {
-    return {
-        sort: jest.fn().mockReturnThis(),
-        skip: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(result)
-    };
-}
+    await postController.getPosts(req, res);
 
-describe('post controller', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-    });
+    assert.deepEqual(find.mock.calls[0].arguments, [{}]);
+    assert.deepEqual(query.sortCalls, [{ _id: -1 }]);
+    assert.deepEqual(query.skipCalls, [100]);
+    assert.deepEqual(query.limitCalls, [100]);
+    assert.equal(query.leanCalls, 1);
+    assertJsonCall(res, [{ _id: '1' }]);
+});
 
-    test('getPosts applies bounded pagination and lean reads', async () => {
-        const query = createQuery([{ _id: '1' }]);
-        Post.find.mockReturnValueOnce(query);
-        const req = { query: { limit: '500', page: '2' } };
-        const res = createRes();
+test('categoryPosts queries by req.params.category with default pagination', async (t) => {
+    const query = createQuery([{ _id: '1' }]);
+    const find = t.mock.method(Post, 'find', () => query);
+    const req = { params: { category: 'abc123' }, query: {} };
+    const res = createRes();
 
-        await postController.getPosts(req, res);
+    await postController.categoryPosts(req, res);
 
-        expect(Post.find).toHaveBeenCalledWith({});
-        expect(query.sort).toHaveBeenCalledWith({ _id: -1 });
-        expect(query.skip).toHaveBeenCalledWith(100);
-        expect(query.limit).toHaveBeenCalledWith(100);
-        expect(query.lean).toHaveBeenCalledTimes(1);
-        expect(res.json).toHaveBeenCalledWith([{ _id: '1' }]);
-    });
-
-    test('categoryPosts queries by req.params.category with default pagination', async () => {
-        const query = createQuery([{ _id: '1' }]);
-        Post.find.mockReturnValueOnce(query);
-        const req = { params: { category: 'abc123' }, query: {} };
-        const res = createRes();
-
-        await postController.categoryPosts(req, res);
-
-        expect(Post.find).toHaveBeenCalledWith({ category: 'abc123' });
-        expect(query.skip).toHaveBeenCalledWith(0);
-        expect(query.limit).toHaveBeenCalledWith(20);
-        expect(query.lean).toHaveBeenCalledTimes(1);
-        expect(res.json).toHaveBeenCalledWith([{ _id: '1' }]);
-        expect(res.status).not.toHaveBeenCalled();
-    });
+    assert.deepEqual(find.mock.calls[0].arguments, [{ category: 'abc123' }]);
+    assert.deepEqual(query.skipCalls, [0]);
+    assert.deepEqual(query.limitCalls, [20]);
+    assert.equal(query.leanCalls, 1);
+    assertJsonCall(res, [{ _id: '1' }]);
+    assert.deepEqual(res.statusCalls, []);
 });

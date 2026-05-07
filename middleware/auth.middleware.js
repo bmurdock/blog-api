@@ -1,6 +1,8 @@
 const User = require('../models/user.model');
 
 function getBearerToken(header) {
+    // Protected routes expect the standard Authorization header:
+    // Authorization: Bearer <token>
     if (typeof header !== 'string') {
         return null;
     }
@@ -17,6 +19,8 @@ function requireAuth(req, res, next) {
     }
 
     try {
+        // Store the decoded token payload on the request so later handlers can
+        // read information about the authenticated user.
         req.user = User.verifyJWT(token);
         next();
     } catch (err) {

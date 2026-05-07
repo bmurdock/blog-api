@@ -5,6 +5,8 @@ const { findPage } = require('./pagination');
 
 exports.getUsers = async (req, res) => {
     try {
+        // Users are returned without password hash fields because the model
+        // excludes them from normal queries and JSON output.
         const result = await findPage(User.find({}), req.query);
         res.json(result);
     } catch (err) {
@@ -13,6 +15,8 @@ exports.getUsers = async (req, res) => {
 };
 
 exports.getUserById = async (req, res) => {
+    // A valid-looking ObjectId is not the same as an existing user, so this
+    // handler checks both cases and returns different status codes.
     if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
         res.status(400).json({ error: 'Invalid user id' });
         return;
@@ -36,6 +40,7 @@ exports.createUser = async (req, res) => {
         return;
     }
 
+    // Basic controller validation keeps API errors readable for beginners.
     const fields = validate(['username', 'email', 'password'], req.body);
     if (fields.length) {
         res.status(400).json({ error: 'Missing fields', fields });
@@ -43,6 +48,8 @@ exports.createUser = async (req, res) => {
     }
 
     try {
+        // Never pass a raw password into the User constructor. Hash it first,
+        // then save only the generated hash and salt.
         const payload = { ...req.body };
         const pass = payload.password;
         delete payload.password;
@@ -51,6 +58,9 @@ exports.createUser = async (req, res) => {
         const result = await user.save();
         res.json(result);
     } catch (err) {
+        if (handleDuplicateKeyError(err, res)) {
+            return;
+        }
         res.status(400).json(err);
     }
 };
@@ -72,6 +82,7 @@ exports.updateUser = async (req, res) => {
             return;
         }
 
+        // Copy only fields this endpoint allows clients to change.
         const allowedFields = ['username', 'email', 'bio', 'image', 'avatar'];
         for (const field of allowedFields) {
             if (typeof req.body[field] !== 'undefined') {
@@ -85,6 +96,9 @@ exports.updateUser = async (req, res) => {
         const result = await user.save();
         res.json(result);
     } catch (err) {
+        if (handleDuplicateKeyError(err, res)) {
+            return;
+        }
         res.status(400).json(err);
     }
 };
@@ -96,6 +110,7 @@ exports.deleteUser = async (req, res) => {
     }
 
     try {
+        // Reject the delete when posts still reference this user as author.
         const referencedPost = await Post.exists({ author: req.params.id });
         if (referencedPost) {
             res.status(409).json({ error: 'User has posts' });
@@ -126,6 +141,8 @@ exports.login = async (req, res) => {
     }
 
     try {
+        // Hash and salt are hidden by default, so login explicitly selects them
+        // for the password check.
         const user = await User.findOne({ username: req.body.username }).select('+hash +salt');
         if (!user || !(await user.validPassword(req.body.password))) {
             res.status(401).json({ error: 'Invalid access' });
@@ -139,10 +156,22 @@ exports.login = async (req, res) => {
 };
 
 function validate(fields, body) {
+    // Return a list of missing field names instead of only saying "bad request".
     return fields.filter((field) => {
         if (typeof body[field] === 'undefined') {
             return field;
         }
         return false;
     });
+}
+
+function handleDuplicateKeyError(err, res) {
+    // MongoDB uses error code 11000 for unique-index conflicts.
+    if (!err || err.code !== 11000) {
+        return false;
+    }
+
+    const fields = Object.keys(err.keyPattern || err.keyValue || {});
+    res.status(400).json({ error: 'Duplicate fields', fields });
+    return true;
 }

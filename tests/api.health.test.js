@@ -1,14 +1,15 @@
-const request = require('supertest');
+const test = require('node:test');
+const { assert, clearModules, request } = require('./test-helpers');
 
-describe('api health endpoint', () => {
-    test('GET /health returns ok status', async () => {
-        process.env.SKIP_DB_CONNECT = 'true';
-        jest.resetModules();
-        const api = require('../api');
+// This is a small route-level test: it makes a real HTTP request to Express,
+// but skips MongoDB because /health does not need the database.
+test('GET /health returns ok status', async () => {
+    process.env.SKIP_DB_CONNECT = 'true';
+    clearModules(['../api']);
+    const api = require('../api');
 
-        const response = await request(api).get('/health');
+    const response = await request(api, 'GET', '/health');
 
-        expect(response.statusCode).toBe(200);
-        expect(response.body).toEqual({ status: 'ok' });
-    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, { status: 'ok' });
 });

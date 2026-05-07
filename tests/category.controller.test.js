@@ -1,63 +1,37 @@
-jest.mock('../models/category.model', () => ({
-    find: jest.fn(),
-    findByIdAndDelete: jest.fn()
-}));
-
-jest.mock('../models/post.model', () => ({
-    exists: jest.fn()
-}));
-
+const test = require('node:test');
+const { assert, assertJsonCall, createQuery, createRes } = require('./test-helpers');
 const Category = require('../models/category.model');
 const Post = require('../models/post.model');
 const categoryController = require('../controllers/category.controller');
 
-function createRes() {
-    const res = {};
-    res.status = jest.fn().mockReturnValue(res);
-    res.json = jest.fn().mockReturnValue(res);
-    return res;
-}
+// Controller tests call handlers directly with fake req/res objects and mocked
+// model methods, so they do not need a running Express server or MongoDB.
+test('getCategories applies bounded pagination and lean reads', async (t) => {
+    const query = createQuery([{ name: 'tech' }]);
+    const find = t.mock.method(Category, 'find', () => query);
+    const req = { query: {} };
+    const res = createRes();
 
-function createQuery(result) {
-    return {
-        sort: jest.fn().mockReturnThis(),
-        skip: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(result)
-    };
-}
+    await categoryController.getCategories(req, res);
 
-describe('category controller', () => {
-    beforeEach(() => {
-        jest.clearAllMocks();
-    });
+    assert.deepEqual(find.mock.calls[0].arguments, [{}]);
+    assert.deepEqual(query.sortCalls, [{ _id: -1 }]);
+    assert.deepEqual(query.skipCalls, [0]);
+    assert.deepEqual(query.limitCalls, [20]);
+    assert.equal(query.leanCalls, 1);
+    assertJsonCall(res, [{ name: 'tech' }]);
+});
 
-    test('getCategories applies bounded pagination and lean reads', async () => {
-        const query = createQuery([{ name: 'tech' }]);
-        Category.find.mockReturnValueOnce(query);
-        const req = { query: {} };
-        const res = createRes();
+test('deleteCategory rejects deletes while posts reference the category', async (t) => {
+    const exists = t.mock.method(Post, 'exists', async () => ({ _id: 'post1' }));
+    const deleteCategory = t.mock.method(Category, 'findByIdAndDelete', async () => null);
+    const req = { params: { id: '507f1f77bcf86cd799439011' } };
+    const res = createRes();
 
-        await categoryController.getCategories(req, res);
+    await categoryController.deleteCategory(req, res);
 
-        expect(Category.find).toHaveBeenCalledWith({});
-        expect(query.sort).toHaveBeenCalledWith({ _id: -1 });
-        expect(query.skip).toHaveBeenCalledWith(0);
-        expect(query.limit).toHaveBeenCalledWith(20);
-        expect(query.lean).toHaveBeenCalledTimes(1);
-        expect(res.json).toHaveBeenCalledWith([{ name: 'tech' }]);
-    });
-
-    test('deleteCategory rejects deletes while posts reference the category', async () => {
-        Post.exists.mockResolvedValueOnce({ _id: 'post1' });
-        const req = { params: { id: '507f1f77bcf86cd799439011' } };
-        const res = createRes();
-
-        await categoryController.deleteCategory(req, res);
-
-        expect(Post.exists).toHaveBeenCalledWith({ category: '507f1f77bcf86cd799439011' });
-        expect(Category.findByIdAndDelete).not.toHaveBeenCalled();
-        expect(res.status).toHaveBeenCalledWith(409);
-        expect(res.json).toHaveBeenCalledWith({ error: 'Category has posts' });
-    });
+    assert.deepEqual(exists.mock.calls[0].arguments, [{ category: '507f1f77bcf86cd799439011' }]);
+    assert.equal(deleteCategory.mock.calls.length, 0);
+    assert.deepEqual(res.statusCalls, [409]);
+    assertJsonCall(res, { error: 'Category has posts' });
 });

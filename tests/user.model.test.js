@@ -1,30 +1,27 @@
-describe('user model', () => {
-    let User;
+const test = require('node:test');
+const { assert } = require('./test-helpers');
 
-    beforeEach(() => {
-        jest.resetModules();
-        process.env.JWT_SECRET = 'test-secret';
-        User = require('../models/user.model');
-    });
+process.env.JWT_SECRET = 'test-secret';
+const User = require('../models/user.model');
 
-    test('toJSON omits password hash and salt', async () => {
-        const user = new User({ username: 'alice', email: 'alice@example.com' });
+// Model tests check behavior on a Mongoose document without saving to MongoDB.
+test('toJSON omits password hash and salt', async () => {
+    const user = new User({ username: 'alice', email: 'alice@example.com' });
 
-        await user.setPassword('secret');
-        const json = user.toJSON();
+    await user.setPassword('secret');
+    const json = user.toJSON();
 
-        expect(user.hash).toBeDefined();
-        expect(user.salt).toBeDefined();
-        expect(json.hash).toBeUndefined();
-        expect(json.salt).toBeUndefined();
-    });
+    assert.ok(user.hash);
+    assert.ok(user.salt);
+    assert.equal(json.hash, undefined);
+    assert.equal(json.salt, undefined);
+});
 
-    test('password verification is asynchronous', async () => {
-        const user = new User({ username: 'alice', email: 'alice@example.com' });
+test('password verification is asynchronous', async () => {
+    const user = new User({ username: 'alice', email: 'alice@example.com' });
 
-        await user.setPassword('secret');
+    await user.setPassword('secret');
 
-        await expect(user.validPassword('secret')).resolves.toBe(true);
-        await expect(user.validPassword('wrong')).resolves.toBe(false);
-    });
+    assert.equal(await user.validPassword('secret'), true);
+    assert.equal(await user.validPassword('wrong'), false);
 });
