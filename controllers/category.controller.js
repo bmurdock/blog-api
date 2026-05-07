@@ -1,5 +1,4 @@
 const Category = require('../models/category.model');
-const Post = require('../models/post.model');
 const { findPage } = require('./pagination');
 const {
     isValidObjectId,
@@ -11,7 +10,7 @@ const {
 exports.getCategories = async (req, res) => {
     try {
         // `req.query` contains values from the URL, such as ?page=2&limit=10.
-        const result = await findPage(Category.find({}), req.query);
+        const result = await findPage(Category.find({ deletedAt: null }), req.query);
         res.json(result);
     } catch (err) {
         sendControllerError(res, err);
@@ -55,7 +54,7 @@ exports.updateCategory = async (req, res) => {
     try {
         const updates = pickFields(req.body, ['name', 'icon']);
         if (!Object.keys(updates).length) {
-            const result = await Category.findById(req.params.id);
+            const result = await Category.findOne({ _id: req.params.id, deletedAt: null });
             if (!result) {
                 res.status(404).json({ error: 'Category not found' });
                 return;
@@ -64,7 +63,7 @@ exports.updateCategory = async (req, res) => {
             return;
         }
 
-        const result = await Category.findByIdAndUpdate(req.params.id, { $set: updates }, {
+        const result = await Category.findOneAndUpdate({ _id: req.params.id, deletedAt: null }, { $set: updates }, {
             // Return the updated document and run schema validators on the update.
             new: true,
             runValidators: true
@@ -86,16 +85,14 @@ exports.deleteCategory = async (req, res) => {
     }
 
     try {
-        // Keep posts from pointing at a category that no longer exists.
-        // In production, pair this with a transaction or a soft-delete policy.
-        // For this demo, the simple check keeps the main idea easy to see.
-        const referencedPost = await Post.exists({ category: req.params.id });
-        if (referencedPost) {
-            res.status(409).json({ error: 'Category has posts' });
-            return;
-        }
-
-        const result = await Category.findByIdAndDelete(req.params.id);
+        // This is a soft delete: normal category lists hide the document, but old
+        // posts still point at a real category. That avoids dangling references
+        // without introducing MongoDB transactions in this beginner demo.
+        const result = await Category.findOneAndUpdate(
+            { _id: req.params.id, deletedAt: null },
+            { $set: { deletedAt: new Date() } },
+            { new: true }
+        );
         if (!result) {
             res.status(404).json({ error: 'Category not found' });
             return;

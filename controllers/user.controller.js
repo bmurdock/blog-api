@@ -1,5 +1,4 @@
 const User = require('../models/user.model');
-const Post = require('../models/post.model');
 const { findPage } = require('./pagination');
 const {
     isValidObjectId,
@@ -9,11 +8,13 @@ const {
     validateRequired
 } = require('./request-helpers');
 
+const PUBLIC_USER_FIELDS = 'username email bio image avatar createdAt updatedAt';
+
 exports.getUsers = async (req, res) => {
     try {
         // Users are returned without password hash fields because the model
         // excludes them from normal queries and JSON output.
-        const result = await findPage(User.find({}), req.query);
+        const result = await findPage(User.find({ deletedAt: null }).select(PUBLIC_USER_FIELDS), req.query);
         res.json(result);
     } catch (err) {
         sendControllerError(res, err);
@@ -29,7 +30,7 @@ exports.getUserById = async (req, res) => {
     }
 
     try {
-        const result = await User.findById(req.params.id);
+        const result = await User.findOne({ _id: req.params.id, deletedAt: null }).select(PUBLIC_USER_FIELDS);
         if (!result) {
             res.status(404).json({ error: 'User not found' });
             return;
@@ -85,7 +86,7 @@ exports.updateUser = async (req, res) => {
     }
 
     try {
-        const user = await User.findById(req.params.id);
+        const user = await User.findOne({ _id: req.params.id, deletedAt: null });
         if (!user) {
             res.status(404).json({ error: 'User not found' });
             return;
@@ -122,16 +123,13 @@ exports.deleteUser = async (req, res) => {
     }
 
     try {
-        // Reject the delete when posts still reference this user as author.
-        // In a production app, this check and delete would normally run in a
-        // transaction. This teaching API keeps the flow simple and readable.
-        const referencedPost = await Post.exists({ author: req.params.id });
-        if (referencedPost) {
-            res.status(409).json({ error: 'User has posts' });
-            return;
-        }
-
-        const result = await User.findByIdAndDelete(req.params.id);
+        // Soft delete the user instead of removing the document. Existing posts
+        // can keep their author reference, while normal user reads hide the user.
+        const result = await User.findOneAndUpdate(
+            { _id: req.params.id, deletedAt: null },
+            { $set: { deletedAt: new Date() } },
+            { new: true }
+        );
         if (!result) {
             res.status(404).json({ error: 'User not found' });
             return;
@@ -157,7 +155,7 @@ exports.login = async (req, res) => {
     try {
         // Hash and salt are hidden by default, so login explicitly selects them
         // for the password check.
-        const user = await User.findOne({ username: req.body.username }).select('+hash +salt');
+        const user = await User.findOne({ username: req.body.username, deletedAt: null }).select('+hash +salt');
         if (!user || !(await user.validPassword(req.body.password))) {
             res.status(401).json({ error: 'Invalid access' });
             return;

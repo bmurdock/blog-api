@@ -14,7 +14,7 @@ test('getCategories applies bounded pagination and lean reads', async (t) => {
 
     await categoryController.getCategories(req, res);
 
-    assert.deepEqual(find.mock.calls[0].arguments, [{}]);
+    assert.deepEqual(find.mock.calls[0].arguments, [{ deletedAt: null }]);
     assert.deepEqual(query.sortCalls, [{ _id: -1 }]);
     assert.deepEqual(query.skipCalls, [0]);
     assert.deepEqual(query.limitCalls, [20]);
@@ -22,18 +22,25 @@ test('getCategories applies bounded pagination and lean reads', async (t) => {
     assertJsonCall(res, [{ name: 'tech' }]);
 });
 
-test('deleteCategory rejects deletes while posts reference the category', async (t) => {
-    const exists = t.mock.method(Post, 'exists', async () => ({ _id: 'post1' }));
-    const deleteCategory = t.mock.method(Category, 'findByIdAndDelete', async () => null);
+test('deleteCategory soft deletes without checking posts first', async (t) => {
+    const exists = t.mock.method(Post, 'exists', async () => {
+        throw new Error('soft delete should not check posts first');
+    });
+    const result = { _id: '507f1f77bcf86cd799439011', name: 'Tech' };
+    const deleteCategory = t.mock.method(Category, 'findOneAndUpdate', async () => result);
     const req = { params: { id: '507f1f77bcf86cd799439011' } };
     const res = createRes();
 
     await categoryController.deleteCategory(req, res);
 
-    assert.deepEqual(exists.mock.calls[0].arguments, [{ category: '507f1f77bcf86cd799439011' }]);
-    assert.equal(deleteCategory.mock.calls.length, 0);
-    assert.deepEqual(res.statusCalls, [409]);
-    assertJsonCall(res, { error: 'Category has posts' });
+    assert.equal(exists.mock.calls.length, 0);
+    assert.deepEqual(deleteCategory.mock.calls[0].arguments[0], {
+        _id: '507f1f77bcf86cd799439011',
+        deletedAt: null
+    });
+    assert.ok(deleteCategory.mock.calls[0].arguments[1].$set.deletedAt instanceof Date);
+    assert.deepEqual(deleteCategory.mock.calls[0].arguments[2], { new: true });
+    assertJsonCall(res, result);
 });
 
 test('createCategory only saves allowed fields', async (t) => {
@@ -63,7 +70,7 @@ test('createCategory only saves allowed fields', async (t) => {
 
 test('updateCategory only sets allowed fields', async (t) => {
     const result = { _id: '507f1f77bcf86cd799439011', name: 'Tech' };
-    const update = t.mock.method(Category, 'findByIdAndUpdate', async () => result);
+    const update = t.mock.method(Category, 'findOneAndUpdate', async () => result);
     const req = {
         params: { id: '507f1f77bcf86cd799439011' },
         body: {
@@ -77,7 +84,7 @@ test('updateCategory only sets allowed fields', async (t) => {
     await categoryController.updateCategory(req, res);
 
     assert.deepEqual(update.mock.calls[0].arguments, [
-        '507f1f77bcf86cd799439011',
+        { _id: '507f1f77bcf86cd799439011', deletedAt: null },
         { $set: { name: 'Tech' } },
         { new: true, runValidators: true }
     ]);

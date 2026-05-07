@@ -5,7 +5,7 @@ const Post = require('../models/post.model');
 const userController = require('../controllers/user.controller');
 
 // User controller tests cover common API concerns: pagination, login, and
-// refusing deletes that would leave posts with missing authors.
+// soft deletes that preserve old post references.
 test('getUsers applies bounded pagination and lean reads', async (t) => {
     const query = createQuery([{ username: 'alice' }]);
     const find = t.mock.method(User, 'find', () => query);
@@ -14,7 +14,8 @@ test('getUsers applies bounded pagination and lean reads', async (t) => {
 
     await userController.getUsers(req, res);
 
-    assert.deepEqual(find.mock.calls[0].arguments, [{}]);
+    assert.deepEqual(find.mock.calls[0].arguments, [{ deletedAt: null }]);
+    assert.deepEqual(query.selectCalls, ['username email bio image avatar createdAt updatedAt']);
     assert.deepEqual(query.sortCalls, [{ _id: -1 }]);
     assert.deepEqual(query.skipCalls, [0]);
     assert.deepEqual(query.limitCalls, [20]);
@@ -36,16 +37,33 @@ test('login explicitly selects password fields and awaits async password verific
 
     await userController.login(req, res);
 
-    assert.deepEqual(findOne.mock.calls[0].arguments, [{ username: 'alice' }]);
+    assert.deepEqual(findOne.mock.calls[0].arguments, [{ username: 'alice', deletedAt: null }]);
     assert.deepEqual(query.select.mock.calls[0].arguments, ['+hash +salt']);
     assert.deepEqual(user.validPassword.mock.calls[0].arguments, ['secret']);
     assert.deepEqual(res.statusCalls, [200]);
     assertJsonCall(res, { token: 'jwt' });
 });
 
-test('deleteUser rejects deletes while posts reference the user', async (t) => {
-    const exists = t.mock.method(Post, 'exists', async () => ({ _id: 'post1' }));
-    const deleteUser = t.mock.method(User, 'findByIdAndDelete', async () => null);
+test('createUser rejects a null password before hashing', async (t) => {
+    const setPassword = t.mock.method(User.prototype, 'setPassword', async () => {
+        throw new Error('should not hash a missing password');
+    });
+    const req = { body: { username: 'alice', email: 'alice@example.com', password: null } };
+    const res = createRes();
+
+    await userController.createUser(req, res);
+
+    assert.equal(setPassword.mock.calls.length, 0);
+    assert.deepEqual(res.statusCalls, [400]);
+    assertJsonCall(res, { error: 'Missing fields', fields: ['password'] });
+});
+
+test('deleteUser soft deletes without checking posts first', async (t) => {
+    const exists = t.mock.method(Post, 'exists', async () => {
+        throw new Error('soft delete should not check posts first');
+    });
+    const result = { _id: '507f1f77bcf86cd799439011', username: 'alice' };
+    const deleteUser = t.mock.method(User, 'findOneAndUpdate', async () => result);
     const req = {
         params: { id: '507f1f77bcf86cd799439011' },
         user: { id: '507f1f77bcf86cd799439011' }
@@ -54,10 +72,30 @@ test('deleteUser rejects deletes while posts reference the user', async (t) => {
 
     await userController.deleteUser(req, res);
 
-    assert.deepEqual(exists.mock.calls[0].arguments, [{ author: '507f1f77bcf86cd799439011' }]);
-    assert.equal(deleteUser.mock.calls.length, 0);
-    assert.deepEqual(res.statusCalls, [409]);
-    assertJsonCall(res, { error: 'User has posts' });
+    assert.equal(exists.mock.calls.length, 0);
+    assert.deepEqual(deleteUser.mock.calls[0].arguments[0], {
+        _id: '507f1f77bcf86cd799439011',
+        deletedAt: null
+    });
+    assert.ok(deleteUser.mock.calls[0].arguments[1].$set.deletedAt instanceof Date);
+    assert.deepEqual(deleteUser.mock.calls[0].arguments[2], { new: true });
+    assertJsonCall(res, result);
+});
+
+test('deleteUser preserves username and email so deleted identities stay reserved', async (t) => {
+    const result = { _id: '507f1f77bcf86cd799439011', username: 'alice' };
+    const deleteUser = t.mock.method(User, 'findOneAndUpdate', async () => result);
+    const req = {
+        params: { id: '507f1f77bcf86cd799439011' },
+        user: { id: '507f1f77bcf86cd799439011' }
+    };
+    const res = createRes();
+
+    await userController.deleteUser(req, res);
+
+    assert.deepEqual(Object.keys(deleteUser.mock.calls[0].arguments[1].$set), ['deletedAt']);
+    assert.equal(typeof deleteUser.mock.calls[0].arguments[1].$set.username, 'undefined');
+    assert.equal(typeof deleteUser.mock.calls[0].arguments[1].$set.email, 'undefined');
 });
 
 test('updateUser rejects attempts to update a different user', async (t) => {

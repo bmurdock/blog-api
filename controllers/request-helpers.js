@@ -1,8 +1,16 @@
 const mongoose = require('mongoose');
 
 function validateRequired(fields, body) {
-    // Return every omitted field so the client can fix the whole request at once.
-    return fields.filter((field) => typeof body[field] === 'undefined');
+    // Return every missing field so the client can fix the whole request at once.
+    // For this API, required fields are text or ObjectId strings, so non-strings
+    // and blank strings should be treated the same as omitted values.
+    return fields.filter((field) => {
+        const value = body[field];
+        return typeof value === 'undefined'
+            || value === null
+            || typeof value !== 'string'
+            || value.trim().length === 0;
+    });
 }
 
 function pickFields(body, allowedFields) {

@@ -28,6 +28,28 @@ function requireAuth(req, res, next) {
     }
 }
 
+async function requireAdmin(req, res, next) {
+    // Categories are shared by the whole blog. The JWT proves which user is
+    // making the request; the database stays the source of truth for roles.
+    try {
+        const isAdmin = req.user && await User.exists({
+            _id: req.user.id,
+            role: 'admin',
+            deletedAt: null
+        });
+        if (!isAdmin) {
+            res.status(403).json({ error: 'Admin access required' });
+            return;
+        }
+
+        next();
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
 module.exports = {
+    requireAdmin,
     requireAuth
 };

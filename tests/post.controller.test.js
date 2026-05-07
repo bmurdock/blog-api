@@ -23,14 +23,31 @@ test('getPosts applies bounded pagination and lean reads', async (t) => {
     assertJsonCall(res, [{ _id: '1' }]);
 });
 
+test('getPosts falls back on partial numbers and caps large page offsets', async (t) => {
+    const query = createQuery([]);
+    t.mock.method(Post, 'find', () => query);
+    const req = { query: { limit: '10abc', page: '5000' } };
+    const res = createRes();
+
+    await postController.getPosts(req, res);
+
+    assert.deepEqual(query.skipCalls, [19980]);
+    assert.deepEqual(query.limitCalls, [20]);
+    assertJsonCall(res, []);
+});
+
 test('categoryPosts queries by req.params.category with default pagination', async (t) => {
     const query = createQuery([{ _id: '1' }]);
     const find = t.mock.method(Post, 'find', () => query);
+    const categoryExists = t.mock.method(Category, 'exists', async () => {
+        throw new Error('archived category reads should not check active category state');
+    });
     const req = { params: { category: '507f1f77bcf86cd799439011' }, query: {} };
     const res = createRes();
 
     await postController.categoryPosts(req, res);
 
+    assert.equal(categoryExists.mock.calls.length, 0);
     assert.deepEqual(find.mock.calls[0].arguments, [{ category: '507f1f77bcf86cd799439011' }]);
     assert.deepEqual(query.skipCalls, [0]);
     assert.deepEqual(query.limitCalls, [20]);
@@ -75,12 +92,42 @@ test('createPost uses the authenticated user as author and verifies references',
 
     await postController.createPost(req, res);
 
-    assert.deepEqual(userExists.mock.calls[0].arguments, [{ _id: '507f1f77bcf86cd799439011' }]);
-    assert.deepEqual(categoryExists.mock.calls[0].arguments, [{ _id: '507f1f77bcf86cd799439013' }]);
+    assert.deepEqual(userExists.mock.calls[0].arguments, [{ _id: '507f1f77bcf86cd799439011', deletedAt: null }]);
+    assert.deepEqual(categoryExists.mock.calls[0].arguments, [{ _id: '507f1f77bcf86cd799439013', deletedAt: null }]);
     assert.equal(savedPost.author.toString(), '507f1f77bcf86cd799439011');
     assert.equal(savedPost.category.toString(), '507f1f77bcf86cd799439013');
     assert.equal(savedPost.ignored, undefined);
     assertJsonCall(res, savedPost);
+});
+
+test('createPost checks author and category references in parallel', async (t) => {
+    let userStarted = false;
+    let categorySawUserStarted = false;
+    t.mock.method(User, 'exists', async () => {
+        userStarted = true;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { _id: '507f1f77bcf86cd799439011' };
+    });
+    t.mock.method(Category, 'exists', async () => {
+        categorySawUserStarted = userStarted;
+        return { _id: '507f1f77bcf86cd799439013' };
+    });
+    t.mock.method(Post.prototype, 'save', async function () {
+        return this;
+    });
+    const req = {
+        body: {
+            title: 'First',
+            body: 'Post body',
+            category: '507f1f77bcf86cd799439013'
+        },
+        user: { id: '507f1f77bcf86cd799439011' }
+    };
+    const res = createRes();
+
+    await postController.createPost(req, res);
+
+    assert.equal(categorySawUserStarted, true);
 });
 
 test('createPost rejects a missing category reference before saving', async (t) => {
@@ -107,11 +154,8 @@ test('createPost rejects a missing category reference before saving', async (t) 
 });
 
 test('updatePost rejects edits from a user who does not own the post', async (t) => {
-    const post = { author: { toString: () => '507f1f77bcf86cd799439012' } };
-    t.mock.method(Post, 'findById', async () => post);
-    const update = t.mock.method(Post, 'findByIdAndUpdate', async () => {
-        throw new Error('should not update another user post');
-    });
+    const update = t.mock.method(Post, 'findOneAndUpdate', async () => null);
+    t.mock.method(Post, 'exists', async () => ({ _id: '507f1f77bcf86cd799439014' }));
     const req = {
         params: { id: '507f1f77bcf86cd799439014' },
         body: { title: 'Changed' },
@@ -121,16 +165,17 @@ test('updatePost rejects edits from a user who does not own the post', async (t)
 
     await postController.updatePost(req, res);
 
-    assert.equal(update.mock.calls.length, 0);
+    assert.deepEqual(update.mock.calls[0].arguments[0], {
+        _id: '507f1f77bcf86cd799439014',
+        author: '507f1f77bcf86cd799439011'
+    });
     assert.deepEqual(res.statusCalls, [403]);
     assertJsonCall(res, { error: 'Cannot update another user post' });
 });
 
 test('updatePost only sets allowed fields', async (t) => {
-    const post = { author: { toString: () => '507f1f77bcf86cd799439011' } };
-    t.mock.method(Post, 'findById', async () => post);
     const result = { _id: '507f1f77bcf86cd799439014', title: 'Changed' };
-    const update = t.mock.method(Post, 'findByIdAndUpdate', async () => result);
+    const update = t.mock.method(Post, 'findOneAndUpdate', async () => result);
     const req = {
         params: { id: '507f1f77bcf86cd799439014' },
         body: {
@@ -145,7 +190,7 @@ test('updatePost only sets allowed fields', async (t) => {
     await postController.updatePost(req, res);
 
     assert.deepEqual(update.mock.calls[0].arguments, [
-        '507f1f77bcf86cd799439014',
+        { _id: '507f1f77bcf86cd799439014', author: '507f1f77bcf86cd799439011' },
         { $set: { title: 'Changed' } },
         { new: true, runValidators: true }
     ]);
@@ -153,10 +198,11 @@ test('updatePost only sets allowed fields', async (t) => {
 });
 
 test('updatePost rejects a missing replacement category', async (t) => {
-    const post = { author: { toString: () => '507f1f77bcf86cd799439011' } };
-    t.mock.method(Post, 'findById', async () => post);
+    const ownsPost = t.mock.method(Post, 'exists', async () => {
+        throw new Error('should not pre-read post ownership before updating');
+    });
     t.mock.method(Category, 'exists', async () => null);
-    const update = t.mock.method(Post, 'findByIdAndUpdate', async () => {
+    const update = t.mock.method(Post, 'findOneAndUpdate', async () => {
         throw new Error('should not update to a missing category');
     });
     const req = {
@@ -168,17 +214,15 @@ test('updatePost rejects a missing replacement category', async (t) => {
 
     await postController.updatePost(req, res);
 
+    assert.equal(ownsPost.mock.calls.length, 0);
     assert.equal(update.mock.calls.length, 0);
     assert.deepEqual(res.statusCalls, [400]);
     assertJsonCall(res, { error: 'Category not found' });
 });
 
 test('deletePost rejects deletes from a user who does not own the post', async (t) => {
-    const post = { author: { toString: () => '507f1f77bcf86cd799439012' } };
-    t.mock.method(Post, 'findById', async () => post);
-    const deletePost = t.mock.method(Post, 'findByIdAndDelete', async () => {
-        throw new Error('should not delete another user post');
-    });
+    const deletePost = t.mock.method(Post, 'findOneAndDelete', async () => null);
+    t.mock.method(Post, 'exists', async () => ({ _id: '507f1f77bcf86cd799439014' }));
     const req = {
         params: { id: '507f1f77bcf86cd799439014' },
         user: { id: '507f1f77bcf86cd799439011' }
@@ -187,7 +231,9 @@ test('deletePost rejects deletes from a user who does not own the post', async (
 
     await postController.deletePost(req, res);
 
-    assert.equal(deletePost.mock.calls.length, 0);
+    assert.deepEqual(deletePost.mock.calls[0].arguments, [
+        { _id: '507f1f77bcf86cd799439014', author: '507f1f77bcf86cd799439011' }
+    ]);
     assert.deepEqual(res.statusCalls, [403]);
     assertJsonCall(res, { error: 'Cannot delete another user post' });
 });

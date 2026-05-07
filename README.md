@@ -11,6 +11,7 @@ The code demonstrates:
 - Returning useful HTTP status codes and JSON responses.
 - Hashing passwords and issuing JWTs for protected routes.
 - Checking simple ownership rules before changing protected resources.
+- Keeping references safe with soft deletes.
 - Writing small tests with Node's built-in test runner.
 
 ## Project Structure
@@ -128,9 +129,9 @@ The login response includes a JWT token.
 
 ```text
 GET    /categories
-POST   /categories      protected
-PUT    /categories/:id  protected
-DELETE /categories/:id  protected
+POST   /categories      protected, admin only
+PUT    /categories/:id  protected, admin only
+DELETE /categories/:id  protected, admin only
 ```
 
 Create a category:
@@ -171,6 +172,10 @@ GET /posts?page=2&limit=10
 ```
 
 The API defaults to `limit=20` and caps the maximum limit at `100`.
+Only whole positive numbers are accepted. Values such as `?limit=10abc` fall
+back to the default instead of being partly parsed. The API also caps very large
+page numbers so one request cannot ask MongoDB to skip an unbounded number of
+documents.
 
 ## Protected Routes
 
@@ -184,8 +189,20 @@ The token comes from `POST /users/login`.
 
 Protected user routes only allow a user to update or delete their own user
 record. Protected post routes only allow the post author to edit or delete the
-post. Category write routes are protected by login, but this demo does not add
-roles or admin permissions because that would distract from the basic API flow.
+post. Category write routes change shared data for the whole blog, so they
+require an admin user.
+
+The demo keeps admin support intentionally small: users have a `role` field with
+the default value `student`. The JWT identifies the user, and the middleware
+checks MongoDB to see whether that user is currently an admin. For a local
+lesson, create a normal user first, then promote that user directly in MongoDB:
+
+```sh
+mongosh blog --eval 'db.users.updateOne({ username: "alice" }, { $set: { role: "admin" } })'
+```
+
+If a user is demoted later, admin-only routes stop working immediately because
+the role check reads the current user document.
 
 ## Data Integrity Notes
 
@@ -193,11 +210,27 @@ Posts store references to users and categories. MongoDB does not automatically
 check that referenced documents exist, so the API checks those references when a
 post is created or when its category changes.
 
-Deleting a user or category is blocked while posts still reference it. In a
-production app, that check and the delete would usually run in a transaction or
-be replaced by a soft-delete policy. This teaching repo keeps that part simple
-so students can see the basic relationship check without learning MongoDB
-transactions first.
+Deleting a user or category uses a soft delete. The API sets `deletedAt` instead
+of removing the document from MongoDB. Normal list and login queries hide soft
+deleted records, but old posts still point at real user and category documents.
+This avoids dangling references without introducing MongoDB transactions in a
+beginner demo.
+
+Soft-deleted users still reserve their username and email. That makes deletion
+behave like account deactivation: the identity remains part of the blog history,
+and another person cannot later take the same username or email. Reusing those
+fields would require a more advanced database index strategy, so this demo keeps
+the rule explicit and simple.
+
+Posts are treated as archived content. Deleting a user or category does not hide
+old posts, and `GET /posts/category/:category` can still return posts for a
+soft-deleted category id. Creating new posts and changing a post category still
+require active users and categories.
+
+Post updates and deletes include the authenticated user's id in the write query.
+That means the database operation itself only matches a post owned by the user.
+If nothing matches, the controller does one small follow-up check so students can
+still see clear `404 Not Found` versus `403 Forbidden` responses.
 
 ## Running Tests
 

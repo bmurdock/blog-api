@@ -1,10 +1,20 @@
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const MAX_PAGE = 1000;
 
 function parsePositiveInt(value, fallback) {
-    // Query string values arrive as strings. If a student sends `?page=abc`,
-    // fall back to a safe default instead of passing bad values to MongoDB.
-    const parsed = parseInt(value, 10);
+    // Query string values arrive as strings. Accept only whole numbers so values
+    // like `10abc` do not quietly become `10`.
+    if (typeof value === 'undefined') {
+        return fallback;
+    }
+
+    const normalized = String(value);
+    if (!/^[1-9]\d*$/.test(normalized)) {
+        return fallback;
+    }
+
+    const parsed = Number(normalized);
     if (!Number.isInteger(parsed) || parsed < 1) {
         return fallback;
     }
@@ -12,7 +22,7 @@ function parsePositiveInt(value, fallback) {
 }
 
 function getPagination(query = {}) {
-    const page = parsePositiveInt(query.page, 1);
+    const page = Math.min(parsePositiveInt(query.page, 1), MAX_PAGE);
     const requestedLimit = parsePositiveInt(query.limit, DEFAULT_LIMIT);
     // Cap the limit so one request cannot ask MongoDB for too many records.
     const limit = Math.min(requestedLimit, MAX_LIMIT);
@@ -38,6 +48,7 @@ function findPage(modelQuery, requestQuery) {
 module.exports = {
     DEFAULT_LIMIT,
     MAX_LIMIT,
+    MAX_PAGE,
     getPagination,
     findPage
 };

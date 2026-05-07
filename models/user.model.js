@@ -55,6 +55,9 @@ const UserSchema = new Schema({
     bio: { type: String, },
     image: { type: String, },
     avatar: { type: String, },
+    role: { type: String, enum: ['student', 'admin'], default: 'student' },
+    // Soft deletes keep old posts pointing at a real user document.
+    deletedAt: { type: Date, default: null },
     hash: { type: String, select: false },
     salt: { type: String, select: false },
 }, {
@@ -106,6 +109,7 @@ UserSchema.methods.toAuthJSON = function () {
         username: this.username,
         email: this.email,
         token: this.generateJWT(),
+        role: this.role,
         bio: this.bio,
         image: this.image
     };

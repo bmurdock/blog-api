@@ -32,6 +32,7 @@ function createQuery(result) {
         sortCalls: [],
         skipCalls: [],
         limitCalls: [],
+        selectCalls: [],
         leanCalls: 0,
         sort(arg) {
             this.sortCalls.push(arg);
@@ -43,6 +44,10 @@ function createQuery(result) {
         },
         limit(arg) {
             this.limitCalls.push(arg);
+            return this;
+        },
+        select(arg) {
+            this.selectCalls.push(arg);
             return this;
         },
         async lean() {
