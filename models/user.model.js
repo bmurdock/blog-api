@@ -16,10 +16,31 @@ function resolveJwtSecret() {
     if (fs.existsSync(keyPath)) {
         return fs.readFileSync(keyPath, 'utf8');
     }
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('JWT_SECRET or JWT_KEY_PATH is required in production');
+    }
     return DEFAULT_DEV_JWT_SECRET;
 }
 
 const jwtSecret = resolveJwtSecret();
+
+function pbkdf2(password, salt) {
+    return new Promise((resolve, reject) => {
+        crypto.pbkdf2(password, salt, 10000, 512, 'sha512', (err, derivedKey) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            resolve(derivedKey.toString('hex'));
+        });
+    });
+}
+
+function removeSecrets(doc, ret) {
+    delete ret.hash;
+    delete ret.salt;
+    return ret;
+}
 
 const UserSchema = new Schema({
 
@@ -28,18 +49,28 @@ const UserSchema = new Schema({
     bio: { type: String, },
     image: { type: String, },
     avatar: { type: String, },
-    hash: { type: String, },
-    salt: { type: String, },
-}, { timestamps: true });
+    hash: { type: String, select: false },
+    salt: { type: String, select: false },
+}, {
+    timestamps: true,
+    toJSON: { transform: removeSecrets },
+    toObject: { transform: removeSecrets }
+});
 
-UserSchema.methods.setPassword = function (password) {
+UserSchema.methods.setPassword = async function (password) {
     this.salt = crypto.randomBytes(16).toString('hex');
-    this.hash = crypto.pbkdf2Sync(password, this.salt, 10000, 512, 'sha512').toString('hex');
+    this.hash = await pbkdf2(password, this.salt);
 }
 
-UserSchema.methods.validPassword = function (password) {
-    const hash = crypto.pbkdf2Sync(password, this.salt, 10000, 512, 'sha512').toString('hex');
-    return this.hash === hash;
+UserSchema.methods.validPassword = async function (password) {
+    if (!this.hash || !this.salt) {
+        return false;
+    }
+
+    const hash = await pbkdf2(password, this.salt);
+    const expected = Buffer.from(this.hash, 'hex');
+    const actual = Buffer.from(hash, 'hex');
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
 UserSchema.methods.generateJWT = function () {
@@ -52,6 +83,10 @@ UserSchema.methods.generateJWT = function () {
         username: this.username,
         exp: parseInt(exp.getTime() / 1000),
     }, jwtSecret);
+}
+
+UserSchema.statics.verifyJWT = function (token) {
+    return jwt.verify(token, jwtSecret);
 }
 
 

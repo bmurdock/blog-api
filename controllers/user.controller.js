@@ -1,9 +1,11 @@
 const User = require('../models/user.model');
 const mongoose = require('mongoose');
+const Post = require('../models/post.model');
+const { findPage } = require('./pagination');
 
 exports.getUsers = async (req, res) => {
     try {
-        const result = await User.find({});
+        const result = await findPage(User.find({}), req.query);
         res.json(result);
     } catch (err) {
         res.status(400).json(err);
@@ -45,7 +47,7 @@ exports.createUser = async (req, res) => {
         const pass = payload.password;
         delete payload.password;
         const user = new User(payload);
-        user.setPassword(pass);
+        await user.setPassword(pass);
         const result = await user.save();
         res.json(result);
     } catch (err) {
@@ -77,7 +79,7 @@ exports.updateUser = async (req, res) => {
             }
         }
         if (typeof req.body.password === 'string' && req.body.password.length > 0) {
-            user.setPassword(req.body.password);
+            await user.setPassword(req.body.password);
         }
 
         const result = await user.save();
@@ -94,6 +96,12 @@ exports.deleteUser = async (req, res) => {
     }
 
     try {
+        const referencedPost = await Post.exists({ author: req.params.id });
+        if (referencedPost) {
+            res.status(409).json({ error: 'User has posts' });
+            return;
+        }
+
         const result = await User.findByIdAndDelete(req.params.id);
         if (!result) {
             res.status(404).json({ error: 'User not found' });
@@ -118,8 +126,8 @@ exports.login = async (req, res) => {
     }
 
     try {
-        const user = await User.findOne({ username: req.body.username });
-        if (!user || !user.validPassword(req.body.password)) {
+        const user = await User.findOne({ username: req.body.username }).select('+hash +salt');
+        if (!user || !(await user.validPassword(req.body.password))) {
             res.status(401).json({ error: 'Invalid access' });
             return;
         }

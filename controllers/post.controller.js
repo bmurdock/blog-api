@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Post = require('../models/post.model');
+const { findPage } = require('./pagination');
 
 exports.createPost = async (req, res) => {
     if (typeof req.body === 'undefined') {
@@ -49,7 +50,7 @@ exports.updatePost = async (req, res) => {
 
 exports.getPosts = async (req, res) => {
     try {
-        const result = await Post.find({});
+        const result = await findPage(Post.find({}), req.query);
         res.json(result);
     } catch (err) {
         res.status(400).json(err);
@@ -58,7 +59,7 @@ exports.getPosts = async (req, res) => {
 
 exports.categoryPosts = async (req, res) => {
     try {
-        const result = await Post.find({ category: req.params.category });
+        const result = await findPage(Post.find({ category: req.params.category }), req.query);
         res.json(result);
     } catch (err) {
         res.status(400).json(err);

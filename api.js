@@ -21,15 +21,30 @@ api.get('/health', (req, res) => {
     res.json({ status: 'ok' });
 });
 
-if (process.env.SKIP_DB_CONNECT !== 'true') {
-    mongoose.connect(dbUrl);
+async function connectDb() {
+    if (process.env.SKIP_DB_CONNECT === 'true') {
+        return;
+    }
+
     mongoose.connection.on('error', console.error.bind(console, 'Mongo Error: '));
+    await mongoose.connect(dbUrl);
 }
 
-if (require.main === module) {
-    api.listen(apiPort, () => {
+async function start() {
+    await connectDb();
+    return api.listen(apiPort, () => {
         console.log(`Blog API listening on port ${apiPort}`);
     });
 }
+
+if (require.main === module) {
+    start().catch((err) => {
+        console.error('Failed to start Blog API:', err);
+        process.exit(1);
+    });
+}
+
+api.connectDb = connectDb;
+api.start = start;
 
 module.exports = api;

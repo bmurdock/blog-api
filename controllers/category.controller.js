@@ -1,9 +1,11 @@
 const Category = require('../models/category.model');
 const mongoose = require('mongoose');
+const Post = require('../models/post.model');
+const { findPage } = require('./pagination');
 
 exports.getCategories = async (req, res) => {
     try {
-        const result = await Category.find({});
+        const result = await findPage(Category.find({}), req.query);
         res.json(result);
     } catch (err) {
         res.status(400).json(err);
@@ -63,6 +65,12 @@ exports.deleteCategory = async (req, res) => {
     }
 
     try {
+        const referencedPost = await Post.exists({ category: req.params.id });
+        if (referencedPost) {
+            res.status(409).json({ error: 'Category has posts' });
+            return;
+        }
+
         const result = await Category.findByIdAndDelete(req.params.id);
         if (!result) {
             res.status(404).json({ error: 'Category not found' });
