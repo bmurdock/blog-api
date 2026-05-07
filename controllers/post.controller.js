@@ -1,6 +1,14 @@
-const mongoose = require('mongoose');
+const Category = require('../models/category.model');
 const Post = require('../models/post.model');
+const User = require('../models/user.model');
 const { findPage } = require('./pagination');
+const {
+    isValidObjectId,
+    pickFields,
+    sameObjectId,
+    sendControllerError,
+    validateRequired
+} = require('./request-helpers');
 
 exports.createPost = async (req, res) => {
     if (typeof req.body === 'undefined') {
@@ -8,19 +16,41 @@ exports.createPost = async (req, res) => {
         return;
     }
 
-    // A post needs text plus IDs that connect it to a category and author.
-    const fields = validate(['title', 'body', 'category', 'author'], req.body);
+    // A post needs text plus a category. The author comes from the JWT, not
+    // from the request body, so clients cannot write posts as someone else.
+    const fields = validateRequired(['title', 'body', 'category'], req.body);
     if (fields.length) {
         res.status(400).json({ error: 'Missing fields', fields });
         return;
     }
+    if (!req.user || !isValidObjectId(req.user.id)) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+    }
+    if (!isValidObjectId(req.body.category)) {
+        res.status(400).json({ error: 'Invalid category id' });
+        return;
+    }
 
     try {
-        const post = new Post(req.body);
+        const authorExists = await User.exists({ _id: req.user.id });
+        if (!authorExists) {
+            res.status(400).json({ error: 'Author not found' });
+            return;
+        }
+        const categoryExists = await Category.exists({ _id: req.body.category });
+        if (!categoryExists) {
+            res.status(400).json({ error: 'Category not found' });
+            return;
+        }
+
+        const payload = pickFields(req.body, ['title', 'body', 'category']);
+        payload.author = req.user.id;
+        const post = new Post(payload);
         const result = await post.save();
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
@@ -30,13 +60,44 @@ exports.updatePost = async (req, res) => {
         return;
     }
     // Validate IDs at the edge of the app before passing them to Mongoose.
-    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidObjectId(req.params.id)) {
         res.status(400).json({ error: 'Invalid post id' });
+        return;
+    }
+    if (!req.user || !isValidObjectId(req.user.id)) {
+        res.status(401).json({ error: 'Authentication required' });
         return;
     }
 
     try {
-        const result = await Post.findByIdAndUpdate(req.params.id, req.body, {
+        const post = await Post.findById(req.params.id);
+        if (!post) {
+            res.status(404).json({ error: 'Post not found' });
+            return;
+        }
+        if (!sameObjectId(post.author, req.user.id)) {
+            res.status(403).json({ error: 'Cannot update another user post' });
+            return;
+        }
+
+        const updates = pickFields(req.body, ['title', 'body', 'category']);
+        if (typeof updates.category !== 'undefined') {
+            if (!isValidObjectId(updates.category)) {
+                res.status(400).json({ error: 'Invalid category id' });
+                return;
+            }
+            const categoryExists = await Category.exists({ _id: updates.category });
+            if (!categoryExists) {
+                res.status(400).json({ error: 'Category not found' });
+                return;
+            }
+        }
+        if (!Object.keys(updates).length) {
+            res.json(post);
+            return;
+        }
+
+        const result = await Post.findByIdAndUpdate(req.params.id, { $set: updates }, {
             // `new: true` sends back the changed post, not the old version.
             new: true,
             runValidators: true
@@ -47,7 +108,7 @@ exports.updatePost = async (req, res) => {
         }
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
@@ -57,27 +118,46 @@ exports.getPosts = async (req, res) => {
         const result = await findPage(Post.find({}), req.query);
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
 exports.categoryPosts = async (req, res) => {
+    if (!isValidObjectId(req.params.category)) {
+        res.status(400).json({ error: 'Invalid category id' });
+        return;
+    }
+
     try {
         // This endpoint shows filtering: only posts whose category matches the URL.
         const result = await findPage(Post.find({ category: req.params.category }), req.query);
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
 exports.deletePost = async (req, res) => {
-    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidObjectId(req.params.id)) {
         res.status(400).json({ error: 'Invalid post id' });
+        return;
+    }
+    if (!req.user || !isValidObjectId(req.user.id)) {
+        res.status(401).json({ error: 'Authentication required' });
         return;
     }
 
     try {
+        const post = await Post.findById(req.params.id);
+        if (!post) {
+            res.status(404).json({ error: 'Post not found' });
+            return;
+        }
+        if (!sameObjectId(post.author, req.user.id)) {
+            res.status(403).json({ error: 'Cannot delete another user post' });
+            return;
+        }
+
         const result = await Post.findByIdAndDelete(req.params.id);
         if (!result) {
             res.status(404).json({ error: 'Post not found' });
@@ -85,16 +165,6 @@ exports.deletePost = async (req, res) => {
         }
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
-
-function validate(fields, body) {
-    // Return a list of missing field names so API clients can correct the request.
-    return fields.filter((field) => {
-        if (typeof body[field] === 'undefined') {
-            return field;
-        }
-        return false;
-    });
-}

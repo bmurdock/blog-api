@@ -1,5 +1,6 @@
 /node_modules/
 key.pem
 certificate.pem
+cert.pem
 
 AGENTS.md

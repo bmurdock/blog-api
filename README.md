@@ -10,6 +10,7 @@ The code demonstrates:
 - Validating request data before saving it.
 - Returning useful HTTP status codes and JSON responses.
 - Hashing passwords and issuing JWTs for protected routes.
+- Checking simple ownership rules before changing protected resources.
 - Writing small tests with Node's built-in test runner.
 
 ## Project Structure
@@ -151,13 +152,14 @@ PUT    /posts/:id       protected
 DELETE /posts/:id       protected
 ```
 
-Create a post:
+Create a post. The API uses the JWT to decide the author, so the client does
+not send an `author` field:
 
 ```sh
 curl -X POST http://localhost:3131/posts \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE" \
-  -d '{"title":"First post","body":"Hello API","category":"CATEGORY_ID","author":"USER_ID"}'
+  -d '{"title":"First post","body":"Hello API","category":"CATEGORY_ID"}'
 ```
 
 ## Pagination
@@ -179,6 +181,23 @@ Authorization: Bearer YOUR_TOKEN_HERE
 ```
 
 The token comes from `POST /users/login`.
+
+Protected user routes only allow a user to update or delete their own user
+record. Protected post routes only allow the post author to edit or delete the
+post. Category write routes are protected by login, but this demo does not add
+roles or admin permissions because that would distract from the basic API flow.
+
+## Data Integrity Notes
+
+Posts store references to users and categories. MongoDB does not automatically
+check that referenced documents exist, so the API checks those references when a
+post is created or when its category changes.
+
+Deleting a user or category is blocked while posts still reference it. In a
+production app, that check and the delete would usually run in a transaction or
+be replaced by a soft-delete policy. This teaching repo keeps that part simple
+so students can see the basic relationship check without learning MongoDB
+transactions first.
 
 ## Running Tests
 

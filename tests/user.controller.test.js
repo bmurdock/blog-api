@@ -46,7 +46,10 @@ test('login explicitly selects password fields and awaits async password verific
 test('deleteUser rejects deletes while posts reference the user', async (t) => {
     const exists = t.mock.method(Post, 'exists', async () => ({ _id: 'post1' }));
     const deleteUser = t.mock.method(User, 'findByIdAndDelete', async () => null);
-    const req = { params: { id: '507f1f77bcf86cd799439011' } };
+    const req = {
+        params: { id: '507f1f77bcf86cd799439011' },
+        user: { id: '507f1f77bcf86cd799439011' }
+    };
     const res = createRes();
 
     await userController.deleteUser(req, res);
@@ -55,4 +58,39 @@ test('deleteUser rejects deletes while posts reference the user', async (t) => {
     assert.equal(deleteUser.mock.calls.length, 0);
     assert.deepEqual(res.statusCalls, [409]);
     assertJsonCall(res, { error: 'User has posts' });
+});
+
+test('updateUser rejects attempts to update a different user', async (t) => {
+    const findById = t.mock.method(User, 'findById', async () => {
+        throw new Error('should not look up another user');
+    });
+    const req = {
+        params: { id: '507f1f77bcf86cd799439011' },
+        body: { bio: 'new bio' },
+        user: { id: '507f1f77bcf86cd799439012' }
+    };
+    const res = createRes();
+
+    await userController.updateUser(req, res);
+
+    assert.equal(findById.mock.calls.length, 0);
+    assert.deepEqual(res.statusCalls, [403]);
+    assertJsonCall(res, { error: 'Cannot update another user' });
+});
+
+test('deleteUser rejects attempts to delete a different user', async (t) => {
+    const exists = t.mock.method(Post, 'exists', async () => {
+        throw new Error('should not check posts for another user');
+    });
+    const req = {
+        params: { id: '507f1f77bcf86cd799439011' },
+        user: { id: '507f1f77bcf86cd799439012' }
+    };
+    const res = createRes();
+
+    await userController.deleteUser(req, res);
+
+    assert.equal(exists.mock.calls.length, 0);
+    assert.deepEqual(res.statusCalls, [403]);
+    assertJsonCall(res, { error: 'Cannot delete another user' });
 });

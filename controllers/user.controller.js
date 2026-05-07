@@ -1,7 +1,13 @@
 const User = require('../models/user.model');
-const mongoose = require('mongoose');
 const Post = require('../models/post.model');
 const { findPage } = require('./pagination');
+const {
+    isValidObjectId,
+    pickFields,
+    sameObjectId,
+    sendControllerError,
+    validateRequired
+} = require('./request-helpers');
 
 exports.getUsers = async (req, res) => {
     try {
@@ -10,14 +16,14 @@ exports.getUsers = async (req, res) => {
         const result = await findPage(User.find({}), req.query);
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
 exports.getUserById = async (req, res) => {
     // A valid-looking ObjectId is not the same as an existing user, so this
     // handler checks both cases and returns different status codes.
-    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidObjectId(req.params.id)) {
         res.status(400).json({ error: 'Invalid user id' });
         return;
     }
@@ -30,7 +36,7 @@ exports.getUserById = async (req, res) => {
         }
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
@@ -41,7 +47,7 @@ exports.createUser = async (req, res) => {
     }
 
     // Basic controller validation keeps API errors readable for beginners.
-    const fields = validate(['username', 'email', 'password'], req.body);
+    const fields = validateRequired(['username', 'email', 'password'], req.body);
     if (fields.length) {
         res.status(400).json({ error: 'Missing fields', fields });
         return;
@@ -50,9 +56,8 @@ exports.createUser = async (req, res) => {
     try {
         // Never pass a raw password into the User constructor. Hash it first,
         // then save only the generated hash and salt.
-        const payload = { ...req.body };
-        const pass = payload.password;
-        delete payload.password;
+        const payload = pickFields(req.body, ['username', 'email', 'bio', 'image', 'avatar']);
+        const pass = req.body.password;
         const user = new User(payload);
         await user.setPassword(pass);
         const result = await user.save();
@@ -61,7 +66,7 @@ exports.createUser = async (req, res) => {
         if (handleDuplicateKeyError(err, res)) {
             return;
         }
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
@@ -70,8 +75,12 @@ exports.updateUser = async (req, res) => {
         res.status(400).json({ error: 'Request not valid' });
         return;
     }
-    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidObjectId(req.params.id)) {
         res.status(400).json({ error: 'Invalid user id' });
+        return;
+    }
+    if (!sameObjectId(req.user && req.user.id, req.params.id)) {
+        res.status(403).json({ error: 'Cannot update another user' });
         return;
     }
 
@@ -84,10 +93,9 @@ exports.updateUser = async (req, res) => {
 
         // Copy only fields this endpoint allows clients to change.
         const allowedFields = ['username', 'email', 'bio', 'image', 'avatar'];
-        for (const field of allowedFields) {
-            if (typeof req.body[field] !== 'undefined') {
-                user[field] = req.body[field];
-            }
+        const updates = pickFields(req.body, allowedFields);
+        for (const field of Object.keys(updates)) {
+            user[field] = updates[field];
         }
         if (typeof req.body.password === 'string' && req.body.password.length > 0) {
             await user.setPassword(req.body.password);
@@ -99,18 +107,24 @@ exports.updateUser = async (req, res) => {
         if (handleDuplicateKeyError(err, res)) {
             return;
         }
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
 exports.deleteUser = async (req, res) => {
-    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidObjectId(req.params.id)) {
         res.status(400).json({ error: 'Invalid user id' });
+        return;
+    }
+    if (!sameObjectId(req.user && req.user.id, req.params.id)) {
+        res.status(403).json({ error: 'Cannot delete another user' });
         return;
     }
 
     try {
         // Reject the delete when posts still reference this user as author.
+        // In a production app, this check and delete would normally run in a
+        // transaction. This teaching API keeps the flow simple and readable.
         const referencedPost = await Post.exists({ author: req.params.id });
         if (referencedPost) {
             res.status(409).json({ error: 'User has posts' });
@@ -124,7 +138,7 @@ exports.deleteUser = async (req, res) => {
         }
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
@@ -134,7 +148,7 @@ exports.login = async (req, res) => {
         return;
     }
 
-    const fields = validate(['username', 'password'], req.body);
+    const fields = validateRequired(['username', 'password'], req.body);
     if (fields.length) {
         res.status(400).json({ error: 'Missing fields', fields });
         return;
@@ -151,19 +165,9 @@ exports.login = async (req, res) => {
 
         res.status(200).json(user.toAuthJSON());
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
-
-function validate(fields, body) {
-    // Return a list of missing field names instead of only saying "bad request".
-    return fields.filter((field) => {
-        if (typeof body[field] === 'undefined') {
-            return field;
-        }
-        return false;
-    });
-}
 
 function handleDuplicateKeyError(err, res) {
     // MongoDB uses error code 11000 for unique-index conflicts.

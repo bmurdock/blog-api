@@ -24,7 +24,11 @@ test('updateUser maps duplicate username errors to an explicit field response', 
         throw duplicateKeyError(['username']);
     });
     t.mock.method(User, 'findById', async () => user);
-    const req = { params: { id: '507f1f77bcf86cd799439011' }, body: { username: 'alice' } };
+    const req = {
+        params: { id: '507f1f77bcf86cd799439011' },
+        body: { username: 'alice' },
+        user: { id: '507f1f77bcf86cd799439011' }
+    };
     const res = createRes();
 
     await userController.updateUser(req, res);

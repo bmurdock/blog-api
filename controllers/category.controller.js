@@ -1,7 +1,12 @@
 const Category = require('../models/category.model');
-const mongoose = require('mongoose');
 const Post = require('../models/post.model');
 const { findPage } = require('./pagination');
+const {
+    isValidObjectId,
+    pickFields,
+    sendControllerError,
+    validateRequired
+} = require('./request-helpers');
 
 exports.getCategories = async (req, res) => {
     try {
@@ -9,7 +14,7 @@ exports.getCategories = async (req, res) => {
         const result = await findPage(Category.find({}), req.query);
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
@@ -20,18 +25,18 @@ exports.createCategory = async (req, res) => {
     }
 
     // Do simple request validation before asking Mongoose to save anything.
-    const fields = validate(['name'], req.body);
+    const fields = validateRequired(['name'], req.body);
     if (fields.length) {
         res.status(400).json({ error: 'Missing fields', fields });
         return;
     }
 
     try {
-        const category = new Category(req.body);
+        const category = new Category(pickFields(req.body, ['name', 'icon']));
         const result = await category.save();
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
@@ -42,13 +47,24 @@ exports.updateCategory = async (req, res) => {
     }
     // Invalid ObjectIds can make Mongoose throw a cast error. Checking early
     // lets the API send a clearer 400 response.
-    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidObjectId(req.params.id)) {
         res.status(400).json({ error: 'Invalid category id' });
         return;
     }
 
     try {
-        const result = await Category.findByIdAndUpdate(req.params.id, req.body, {
+        const updates = pickFields(req.body, ['name', 'icon']);
+        if (!Object.keys(updates).length) {
+            const result = await Category.findById(req.params.id);
+            if (!result) {
+                res.status(404).json({ error: 'Category not found' });
+                return;
+            }
+            res.json(result);
+            return;
+        }
+
+        const result = await Category.findByIdAndUpdate(req.params.id, { $set: updates }, {
             // Return the updated document and run schema validators on the update.
             new: true,
             runValidators: true
@@ -59,18 +75,20 @@ exports.updateCategory = async (req, res) => {
         }
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
 
 exports.deleteCategory = async (req, res) => {
-    if (typeof req.params.id !== 'string' || !mongoose.Types.ObjectId.isValid(req.params.id)) {
+    if (!isValidObjectId(req.params.id)) {
         res.status(400).json({ error: 'Invalid category id' });
         return;
     }
 
     try {
         // Keep posts from pointing at a category that no longer exists.
+        // In production, pair this with a transaction or a soft-delete policy.
+        // For this demo, the simple check keeps the main idea easy to see.
         const referencedPost = await Post.exists({ category: req.params.id });
         if (referencedPost) {
             res.status(409).json({ error: 'Category has posts' });
@@ -84,16 +102,6 @@ exports.deleteCategory = async (req, res) => {
         }
         res.json(result);
     } catch (err) {
-        res.status(400).json(err);
+        sendControllerError(res, err);
     }
 };
-
-function validate(fields, body) {
-    // Return a list of missing field names so the client knows what to fix.
-    return fields.filter((field) => {
-        if (typeof body[field] === 'undefined') {
-            return field;
-        }
-        return false;
-    });
-}

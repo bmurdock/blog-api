@@ -35,3 +35,51 @@ test('deleteCategory rejects deletes while posts reference the category', async 
     assert.deepEqual(res.statusCalls, [409]);
     assertJsonCall(res, { error: 'Category has posts' });
 });
+
+test('createCategory only saves allowed fields', async (t) => {
+    let savedCategory;
+    t.mock.method(Category.prototype, 'save', async function () {
+        savedCategory = this;
+        return this;
+    });
+    const req = {
+        body: {
+            name: 'Tech',
+            icon: 'code',
+            owner: '507f1f77bcf86cd799439012',
+            ignored: 'not saved'
+        }
+    };
+    const res = createRes();
+
+    await categoryController.createCategory(req, res);
+
+    assert.equal(savedCategory.name, 'Tech');
+    assert.equal(savedCategory.icon, 'code');
+    assert.equal(savedCategory.owner, undefined);
+    assert.equal(savedCategory.ignored, undefined);
+    assertJsonCall(res, savedCategory);
+});
+
+test('updateCategory only sets allowed fields', async (t) => {
+    const result = { _id: '507f1f77bcf86cd799439011', name: 'Tech' };
+    const update = t.mock.method(Category, 'findByIdAndUpdate', async () => result);
+    const req = {
+        params: { id: '507f1f77bcf86cd799439011' },
+        body: {
+            name: 'Tech',
+            owner: '507f1f77bcf86cd799439012',
+            ignored: 'not saved'
+        }
+    };
+    const res = createRes();
+
+    await categoryController.updateCategory(req, res);
+
+    assert.deepEqual(update.mock.calls[0].arguments, [
+        '507f1f77bcf86cd799439011',
+        { $set: { name: 'Tech' } },
+        { new: true, runValidators: true }
+    ]);
+    assertJsonCall(res, result);
+});
